@@ -1,7 +1,9 @@
 import os
+import json
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -11,6 +13,7 @@ llm = ChatOpenAI(
     model="deepseek/deepseek-chat",
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("API"),
+    streaming=True
 )
 
 app = FastAPI()
@@ -34,14 +37,17 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
 
 
-class ChatReply(BaseModel):
-    res: str
-
-
 @app.post("/message")
-async def chat(request: ChatRequest) -> ChatReply:
-    try:
-        result = await llm.ainvoke(request.message)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM request failed: {e}")
-    return ChatReply(res=str(result.content))
+async def chat(request: ChatRequest):
+    async def generate():
+        async for chunk in llm.astream(request.message):
+            if chunk.content:
+                yield json.dumps(
+                    {"res": chunk.content},
+                    ensure_ascii=False
+                ) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson"
+    )

@@ -93,8 +93,59 @@ export default function App() {
         throw new Error(`Server returned ${response.status}`);
       }
 
-      const data: { res: string } = await response.json();
-      addMessage("assistant", data.res);
+     if (!response.body) {
+  throw new Error("Response body is empty");
+}
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+const assistantId = nextId.current++;
+
+setMessages((prev) => [
+  ...prev,
+  { id: assistantId, role: "assistant", text: "" },
+]);
+
+let buffer = "";
+
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+
+  buffer += decoder.decode(value, { stream: true });
+
+  const lines = buffer.split("\n");
+  buffer = lines.pop() ?? "";
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    const data: { res: string } = JSON.parse(line);
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === assistantId
+          ? { ...m, text: m.text + data.res }
+          : m
+      )
+    );
+  }
+}
+
+buffer += decoder.decode();
+
+if (buffer.trim()) {
+  const data: { res: string } = JSON.parse(buffer);
+
+  setMessages((prev) =>
+    prev.map((m) =>
+      m.id === assistantId
+        ? { ...m, text: m.text + data.res }
+        : m
+    )
+  );
+}
     } catch (err) {
       const reason = err instanceof Error ? err.message : "Unknown error";
       addMessage("assistant", `Could not reach the backend. ${reason}`, true);
